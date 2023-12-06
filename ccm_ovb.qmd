@@ -141,8 +141,8 @@ And we don't get a relationship. Maybe a different embedding dimension?
 
 ```{r}
 rho_e <- EmbedDimension(dataFrame = dat_conf, 
-                        lib = "1 900", 
-                        pred = "901 1000", 
+                        lib = "1 700", 
+                        pred = "701 1000", 
                         columns = "x2", 
                         target = "y")
 ```

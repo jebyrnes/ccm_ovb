@@ -1,0 +1,150 @@
+---
+title: "EDM and Confounding"
+format: html
+---
+
+To explore the effect of confounding, let's start by loading a few libraries.
+
+```{r}
+#| warning: false
+#| message: false
+
+library(rEDM)  # for CCM
+library(dplyr) # a little data manipulation
+library(tidyr) # a wee bit more data manipulation
+library(ggplot2) # plots
+library(dagitty); library(ggdag)
+theme_set(theme_bw(base_size = 14))
+
+set.seed(20231106)
+```
+
+# 1. No Confounding
+To start with, let's create an example data set with no confounding. Here's the way the system works.
+
+```{r}
+unconf_dag <- dagify(
+  y_t1 ~ y_t0 + x1_t0
+) 
+
+coordinates(unconf_dag) <- list(
+  x = c(y_t1 = 1, y_t0 = 0, x1_t0 = 0),
+  y = c(y_t1 = 1, y_t0 = 1, x1_t0 = 0)
+)
+
+ggdag(unconf_dag)
+```
+
+So, no feedbacks, just pure lag effects. We'll make a timeseries of x using `diffinv(rnorm())` for x1, and then calculate y. Let's make the timeseries of length 1000. We'll add a little fuzz (sd of 2) to our y and start with a standard normal for x1.
+
+```{r}
+#| warning: false
+
+len <- 1000
+dat <- tibble(time = 1:len,
+              x1 = diffinv(rnorm(len-1)), # time series
+              y = 0.5) |>
+  mutate(y = rnorm(len, 
+                   mean = lag(y) + lag(x1),
+                   sd = 2)) 
+```
+
+What does this look like?
+
+```{r}
+#| warning: false
+
+dat |>
+  pivot_longer(x1:y) |>
+  ggplot(aes(x=time, y = value, color = name)) +
+  geom_line() +
+  facet_wrap(vars(name))
+```
+
+Cool, we can see the connection. Now, let's use `Simplex()` for the analysis, with a 70:30 split and an embedding dimension of 3.
+
+```{r}
+simplex_out_x <- Simplex(dataFrame = dat, 
+                         lib = "1 700", 
+                         pred = "701 1000", 
+                         columns = "x1", 
+                         target = "y",
+                         E = 3)
+
+
+ComputeError(simplex_out_x$Observations,
+             simplex_out_x$Predictions)
+```
+
+Great - we can see the relationship. 
+
+# Adding confouding
+
+Let's do something different. Now, let's add an x2, which is determined by lag of x1. It also influences y.
+
+```{r}
+conf_dag <- dagify(
+  y_t1 ~ y_t0 + x1_t0 + x2_t1,
+  x2_t1 ~ x1_t0
+) 
+
+coordinates(conf_dag) <- list(
+  x = c(y_t1 = 1, y_t0 = 0, x1_t0 = 0, x2_t1 = 1),
+  y = c(y_t1 = 1, y_t0 = 1, x1_t0 = 0, x2_t1 = -1)
+)
+
+ggdag(conf_dag)
+```
+
+Let's assume the path from x1_t0 to x2_t1 is negative. So, the effects of x1 and x2 are in opposition. We will also add a little noise to x2.
+
+```{r}
+#| warning: false
+
+dat_conf <- tibble(time = 1:len,
+              x1 = diffinv(rnorm(len-1)), # time series
+              x2 = rnorm(len, -1*lag(x1), 5),
+              y = 0.5) |>
+  mutate(y = rnorm(len, lag(y) + lag(x1) + x2,
+                   0)) |>
+  as.data.frame()
+```
+
+We can plot these.
+```{r}
+#| warning: false
+
+dat_conf |>
+  pivot_longer(x1:y) |>
+  ggplot(aes(x=time, y = value, color = name)) +
+  geom_line() +
+  facet_wrap(vars(name))
+```
+
+OK, now let's try looking at if we can recover a relationship between x2 and y.
+
+```{r}
+simplex_out_conf <- Simplex(dataFrame = dat_conf, 
+                         lib = "1 700", 
+                         pred = "701 1000", 
+                         columns = "x2", 
+                         target = "y",
+                         E = 3)
+
+
+ComputeError(simplex_out_conf$Observations,
+             simplex_out_conf$Predictions)
+```
+
+And we don't get a relationship. Maybe a different embedding dimension?
+
+
+```{r}
+rho_e <- EmbedDimension(dataFrame = dat_conf, 
+                        lib = "1 900", 
+                        pred = "901 1000", 
+                        columns = "x2", 
+                        target = "y")
+```
+
+Still no.
